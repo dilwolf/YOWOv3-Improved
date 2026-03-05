@@ -1,0 +1,1 @@
+## Paste your ShuffleNetv2 model's weight here.

@@ -1,0 +1,1 @@
+## Paste your i3D model's weight here.
