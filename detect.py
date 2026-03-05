@@ -3,7 +3,6 @@ import cv2
 import yaml
 import time
 import torch
-import shutil
 import argparse
 import numpy as np
 from utils import util
@@ -11,7 +10,7 @@ from pathlib import Path
 from model.TSN.YOWOv3 import build_yowov3
 
 def build_config():
-    ucf_config_file = 'utils/best_2falldown.yaml'
+    ucf_config_file = 'utils/best_falldown.yaml'
     with open(ucf_config_file, "r") as file:
         ucf_config = yaml.load(file, Loader=yaml.SafeLoader) 
     
@@ -162,7 +161,6 @@ def detect(config, input_path, model_weight):
 
     # Buffer to store all frames for sliding window
     all_frames = []
-    frame_idx = 0
     img_iter = iter(image_files) if not is_video else None
 
     # Read all frames first

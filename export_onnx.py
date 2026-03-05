@@ -6,7 +6,7 @@ from model.TSN.YOWOv3 import build_yowov3
 import warnings
 warnings.filterwarnings("ignore")
 
-name = "fire_best"
+name = "best_falldown"
 output_onnx_path = f"{name}_onnx.onnx"
 model_weight = f"{name}.pth" 
 
@@ -21,7 +21,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"device: {device}")
 
 config = build_config()
-config["pretrain_path"] = str(model_weight)
+config["pretrain_path"] = model_weight
 model = build_yowov3(config)
 pretrain_path = config["pretrain_path"]
 print(f"model_weight: {pretrain_path}")
