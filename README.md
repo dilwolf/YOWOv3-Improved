@@ -8,7 +8,7 @@ This repository is an improved and extended version of [YOWOv3](https://github.c
 
 We were asked to do a pull request to the orignal repo in the one of the official repo's [issue](https://github.com/hope1337/YOWOv3/issues/61#issuecomment-3314445030) but due to the extent of structural changes made to the codebase, a direct pull request was not practical — however, the offer remains open if the original author wishes to incorporate any improvements.
 
-> **Note:** This code has been used in real-world projects and is working well. However, it may still contain limitations or mistakes in the modified version of the code. If you find any issues or have suggestions, feel free to open a discussion or issue — I'm happy to talk about it.
+> **Note:** This code has been used in real-world projects and it seems working well. However, it may still contain limitations or mistakes in the modified version of the code. If you find any issues or have suggestions, feel free to open a discussion or issue — I'm happy to talk about it.
 
 ---
 
