@@ -44,7 +44,7 @@ https://drive.google.com/file/d/1Dwh90pRi7uGkH5qLRjQIFiEmMJrAog5J/view
 
 Clone this repository:
 ```bash
-git clone https://github.com/YOUR_USERNAME/YOWOv3-Improved.git
+git clone https://github.com/dilwolf/YOWOv3-Improved.git
 cd YOWOv3-Improved
 ```
 
@@ -141,9 +141,9 @@ If you use this repository in your research, please consider citing the original
 
 This project builds upon the following repositories, and I am deeply grateful to their authors:
 
-- [YOWOv3](https://github.com/AakiraOtok/YOWOv3) — the original codebase this repo extends
+- [YOWOv3](https://github.com/hope1337/YOWOv3) — the original codebase this repo extends
 - [YOWOv2](https://github.com/yjh0410/YOWOv2) — the this repo was used in the original codebase
-- [YOWO](https://github.com/wei-tim/YOWO)  — the this repo was used in the original codebase
+- [YOWO](https://github.com/wei-tim/YOWO)  — the first YOWO series
 - [YOLOv8-pt](https://github.com/jahongir7174/YOLOv8-pt) — neat YOLOv8 PyTorch implementation
 - [Efficient-3DCNNs](https://github.com/okankop/Efficient-3DCNNs) — 3D CNN backbones
 - [pytorch-i3d](https://github.com/piergiaj/pytorch-i3d) — I3D model implementation
