@@ -102,8 +102,8 @@ fusion_module     : CFAM
 mode              : decoupled
 interchannels     : [192, 192, 192]
 pretrain_path     : ema_epoch_7.pth
-data_root         : /home/axion/YOWO3/fire_aihub
-img_size          : [640, 640]
+data_root         : /path/to/your/main_dataset_folder
+img_size          : (640, 640)
 clip_length       : 5
 num_workers       : 20
 acc_grad          : 16
@@ -117,8 +117,9 @@ save_folder       : weights/model_checkpoint
 sampling_rate     : 7
 
 idx2name:
-  0 : flame
-  1 : smoke
+  0 : fight
+  1 : falldown
+  # .....
 
 augment:
   # GEOMETRIC TRANSFORMS

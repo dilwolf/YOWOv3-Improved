@@ -253,7 +253,7 @@ class VideoAugmentation:
         """
         Args:
             img_size: Target image size for model input (height, width)
-            mode: 'train' or 'val' - determines augmentation strength
+            mode: 'train' or 'valid' - determines augmentation strength
         """
         if isinstance(img_size, int):
             img_size = (img_size, img_size)
