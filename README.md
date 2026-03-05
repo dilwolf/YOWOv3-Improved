@@ -1,6 +1,6 @@
 # YOWOv3-Improved: An Improved and Extended codebase of original [YOWOv3](https://github.com/hope1337/YOWOv3) for Human Action Detection and Recognition
 
-This repository is an improved and extended version of [YOWOv3](https://github.com/AakiraOtok/YOWOv3), originally proposed in the paper. The main aim is to make cleaner and more extensible codebase:
+This repository is an improved code version of [YOWOv3](https://github.com/hope1337/YOWOv3), originally proposed in the paper. The main aim is to make cleaner and more extensible codebase:
 
 > **YOWOv3: An Efficient and Generalized Framework for Human Action Detection and Recognition**
 > Duc Manh Nguyen Dang, Viet Hang Duong, Jia Ching Wang, Nhan Bui Duc
@@ -11,7 +11,6 @@ We were asked to do a pull request to the orignal repo in the one of the officia
 > **Note:** This code has been used in real-world projects and it seems working well. However, it may still contain limitations or mistakes in the modified version of the code. If you find any issues or have suggestions, feel free to open a discussion or issue — I'm happy to talk about it.
 
 ---
-
 ## What's new in YOWOv3-Improved and planned to add in the future
 
 Compared to the original [YOWOv3](https://github.com/hope1337/YOWOv3) codebase, this repository introduces the following improvements:
@@ -33,7 +32,6 @@ This repository primarily supports the **UCF101-24** dataset structure. However,
 Download from (as in YOWOv2):
 ```
 https://drive.google.com/file/d/1Dwh90pRi7uGkH5qLRjQIFiEmMJrAog5J/view
-
 ```
 
 ---
@@ -59,8 +57,6 @@ pip install -r requirements.txt
 
 Almost all configurations are controlled through a config file as in the original [YOWOv3](https://github.com/hope1337/YOWOv3). Sample config files are provided in the `util/config.md` file.
 
-> **Warning:** All options must remain consistent between training and inference. Changing settings like `image_size` or `backbone3D` between training and testing will severely degrade performance.
-
 ### Training/Multi-GPU Training with DDP
 ```bash
 torchrun --nproc_per_node=$ main.py --train
@@ -78,14 +74,12 @@ python main.py --train
 torchrun --nproc_per_node=2 main.py --valid
 ```
 
-### Detection (result saved as a video file)
-
+### Detection
 ```bash
 python detect.py --weight best.pth --source path/to/source
 ```
 
 ### Export to ONNX
-
 ```bash
 python export_onnx.py
 ```
@@ -94,7 +88,6 @@ python export_onnx.py
 ## Pretrained Resources
 
 Pretrained backbone and model checkpoints from the original YOWOv3 are available on the author's Hugging Face repository:
-
 ```
 https://huggingface.co/manh6054/YOWOv3/tree/main
 ```
@@ -103,19 +96,13 @@ These checkpoints are compatible with this repository, provided that the config 
 
 ---
 
-## Limitations and Known Issues
+## Limitations and Acknowledgement
 
 - Some edge cases in augmentation may not be fully handled — contributions and feedback are welcome.
 - AVA v2.2 evaluation is not the primary focus of this repo but may still work with minor adjustments.
 - The codebase has been validated on real-world projects but may contain bugs in less common configurations.
 
 If you encounter any issues or have insights to share, please open an [issue](../../issues) or start a [discussion](../../discussions).
-
----
-
-## License
-
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**, consistent with the upstream dependencies this project relies on. See [LICENSE](LICENSE) for details.
 
 ---
 
