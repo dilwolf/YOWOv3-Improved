@@ -1,14 +1,8 @@
 # YOWOv3-Improved: An Improved and Extended codebase of original [YOWOv3](https://github.com/hope1337/YOWOv3) for Human Action Detection and Recognition
 
-This repository is an improved code version of [YOWOv3](https://github.com/hope1337/YOWOv3), originally proposed in the paper. The main aim is to make cleaner and more extensible codebase:
+This repository is an improved codebase version of [YOWOv3](https://github.com/hope1337/YOWOv3), originally proposed in the [paper](https://arxiv.org/abs/2408.02623). The main aim is to make cleaner and more extensible codebase:
 
-> **YOWOv3: An Efficient and Generalized Framework for Human Action Detection and Recognition**
-> Duc Manh Nguyen Dang, Viet Hang Duong, Jia Ching Wang, Nhan Bui Duc
-> [arXiv:2408.02623](https://arxiv.org/abs/2408.02623)
-
-We were asked to do a pull request to the orignal repo in the one of the official repo's [issue](https://github.com/hope1337/YOWOv3/issues/61#issuecomment-3314445030) but due to the extent of structural changes made to the codebase, a direct pull request was not practical — however, the offer remains open if the original author wishes to incorporate any improvements.
-
-> **Note:** This code has been used in real-world projects and it seems working well. However, it may still contain limitations or mistakes in the modified version of the code. If you find any issues or have suggestions, feel free to open a discussion or issue — I'm happy to talk about it.
+> **⚠️Note:** This code has been used in real-world projects and it seems working well. However, it may still contain limitations or mistakes. If you find any issues or have suggestions, feel free to open a discussion or issue — I'm happy to talk about it.
 
 ---
 ## What's new in YOWOv3-Improved and planned to add in the future
@@ -21,7 +15,7 @@ Compared to the original [YOWOv3](https://github.com/hope1337/YOWOv3) codebase, 
 - [x]  **Updated TAL Loss** — Modified TAL (Task-Aligned Learning) loss to help the model learn from background images and significantly reduce false positives in predictions. However, I could not touch SimOTA loss because the updating TAL was just enogh for me. 
 - [x]  **Cleaner and More Extensible Codebase** — The overall structure has been reorganized to make it easier to plug in custom datasets, backbones, and other components.
 - [ ] **Rectangle input size** (working on) — Extending model input size to different input resolutions (e.g., 384x640) which is very beneficial in Surveiallnce systems (right now, model supports square input size e.g., 640x640)
-- [ ] **Reproducing 3DCNNs results** (working on) — Working on reproducing [Efficient-3DCNNs](https://github.com/okankop/Efficient-3DCNNs) to make codebase reusable and improve accuracy (hopefully...). This will be posted in a seperate repo and will be announced here.
+- [ ] **Reproducing 3DCNNs results** (working on) — Working on reproducing [Efficient-3DCNNs](https://github.com/okankop/Efficient-3DCNNs) results to make codebase reusable and improve accuracy (hopefully...). This will be posted in a seperate repo and will be announced here.
 ---
 
 ## Dataset Support
@@ -46,16 +40,16 @@ git clone https://github.com/dilwolf/YOWOv3-Improved.git
 cd YOWOv3-Improved
 ```
 
-Install the dependencies (tested Python 3.10+):
+Install the latest PyTorch and Python versions (tested PyTorch 2.4+ and Python 3.10+):
 ```bash
-pip install -r requirements.txt
+pip install torch
 ```
 ---
 ## Basic Usage
 
 ### Config File
 
-Almost all configurations are controlled through a config file as in the original [YOWOv3](https://github.com/hope1337/YOWOv3). Sample config files are provided in the `util/config.md` file.
+Almost all configurations are controlled through a config file as in the original [YOWOv3](https://github.com/hope1337/YOWOv3). Sample config files are provided in the `util/config.yaml` file.
 
 ### Training/Multi-GPU Training with DDP
 ```bash
@@ -66,12 +60,6 @@ Replace `$` with the number of GPUs available on your machine.
 ### Simply run for a single GPU:
 ```bash
 python main.py --train
-```
-
-### Evaluation
-
-```bash
-torchrun --nproc_per_node=2 main.py --valid
 ```
 
 ### Detection
