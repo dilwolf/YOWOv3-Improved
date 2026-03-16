@@ -3,156 +3,69 @@ import cv2
 import yaml
 import time
 import torch
-import shutil
 import argparse
-import numpy as np
 from utils import util
 from pathlib import Path
 from collections import deque
 from model.TSN.YOWOv3 import build_yowov3
 
-import os
+try:
+    import onnxruntime as ort
+    ONNX_AVAILABLE = True
+except ImportError:
+    ONNX_AVAILABLE = False
 
 VIDEO_EXTS = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
-IMAGE_EXTS = {'.jpg', '.jpeg', '.png'}
 
-def detect_input_type(input_path):
-    if os.path.isfile(input_path):
-        ext = os.path.splitext(input_path)[1].lower()
-        if ext in VIDEO_EXTS:
-            return True, False   # is_video, is_path
-        if ext in IMAGE_EXTS:
-            return False, False
-        raise ValueError("Unsupported file type.")
+def load_model(config, model_weight):
+    """Load either PyTorch or ONNX model based on weight file extension."""
+    ext = os.path.splitext(str(model_weight))[1].lower()
 
-    if os.path.isdir(input_path):
-        image_found = False
-        video_found = False
-        for f in os.listdir(input_path):
-            p = os.path.join(input_path, f)
-            if not os.path.isfile(p):
-                continue
-            ext = os.path.splitext(f)[1].lower()
-            if ext in IMAGE_EXTS:
-                image_found = True
-            elif ext in VIDEO_EXTS:
-                video_found = True
+    if ext == '.onnx':
+        if not ONNX_AVAILABLE:
+            raise RuntimeError("onnxruntime is not installed. Run: pip install onnxruntime-gpu")
 
-        if image_found and video_found:
-            raise ValueError("Directory contains both image and video files.")
-        if image_found:
-            return False, True   # image folder
-        if video_found:
-            return True, True    # video folder
-        raise ValueError("Directory contains no supported image or video files.")
+        providers = [
+            ('CUDAExecutionProvider', {
+                'device_id': 0,
+                'arena_extend_strategy': 'kNextPowerOfTwo',
+                'gpu_mem_limit': 4 * 1024 * 1024 * 1024,
+                'cudnn_conv_algo_search': 'EXHAUSTIVE',
+            }),
+            'CPUExecutionProvider',
+        ]
+        sess_options = ort.SessionOptions()
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-    raise ValueError("Input path does not exist.")
+        session = ort.InferenceSession(str(model_weight), sess_options, providers=providers)
+
+        active = session.get_providers()
+        print(f"ONNX Runtime providers active: {active}")
+        if 'CUDAExecutionProvider' not in active:
+            print("Warning: CUDAExecutionProvider not active, falling back to CPU.")
+
+        return 'onnx', session
+
+    else:
+        config["pretrain_path"] = str(model_weight)
+        model = build_yowov3(config)
+        model.to("cuda")
+        model.eval()
+        util.get_info(config, model)
+        return 'torch', model
 
 def build_config():
-    ucf_config_file = 'utils/YAML/falldown_best.yaml'
+    """Build sample config for inference."""
+    
+    ucf_config_file = 'utils/YAML/sample_config.yaml'
     with open(ucf_config_file, "r") as file:
         ucf_config = yaml.load(file, Loader=yaml.SafeLoader) 
-    
     return ucf_config
 
-def plot_bboxes(original_frame, bboxes, labels, conf_scores, mapping):
-    labels = [int(l) for l in labels]
-    for score, cls, bbox in zip(conf_scores, labels, bboxes): # loop over all bboxes
-        class_label = mapping[cls] # class name
-        label = f"{class_label} : {score*100:0.2f}" # bbox label
-        lbl_margin = 3 #label margin
-        img = cv2.rectangle(original_frame, (int(bbox[0]), int(bbox[1])),
-                            (int(bbox[2]), int(bbox[3])),
-                            color=(0, 255, 0),
-                            thickness=1)
-        label_size = cv2.getTextSize(label, # labelsize in pixels 
-                                     fontFace=cv2.FONT_HERSHEY_SIMPLEX, 
-                                     fontScale=1, thickness=1)
-        lbl_w, lbl_h = label_size[0] # label w and h
-        lbl_w += 2* lbl_margin # add margins on both sides
-        lbl_h += 2*lbl_margin
-        img = cv2.rectangle(img, (int(bbox[0]), int(bbox[1])), # plot label background
-                             (int(bbox[0])+lbl_w, int(bbox[1])-lbl_h),
-                             color=(0, 255, 0), 
-                             thickness=-1) # thickness=-1 means filled rectangle
-        cv2.putText(img, label, (int(bbox[0])+ lbl_margin, int(bbox[1])-lbl_margin), # write label to the image
-                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=1.0, color=(255, 255, 255 ),
-                    thickness=1)
-    return img
-
-def scale(coords, shape1, shape2, ratio_pad=None):
-    
-    if ratio_pad is None:  # calculate from shapes
-        gain = min(shape1[0] / shape2[0], shape1[1] / shape2[1])  # old / new
-        pad = ((shape1[1] - shape2[1] * gain) / 2,
-               (shape1[0] - shape2[0] * gain) / 2)
-    else:
-        (gain_w, _), (pad_w, pad_h) = ratio_pad
-        gain = gain_w
-        pad = (pad_w, pad_h)
-
-    coords[:, [0, 2]] -= pad[0]  # remove x padding
-    coords[:, [1, 3]] -= pad[1]  # remove y padding
-    coords[:, :4] /= gain        # scale back
-
-    coords[:, 0].clamp_(0, shape2[1])  # x1
-    coords[:, 1].clamp_(0, shape2[0])  # y1
-    coords[:, 2].clamp_(0, shape2[1])  # x2
-    coords[:, 3].clamp_(0, shape2[0])  # y2
-    return coords
-
-def _letterbox(frames, target_size):
-        """
-        Transform clip (frames) for model input
-        """
-
-        # ImageNet normalization
-        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-        target_h, target_w = target_size
-        h0, w0 = frames[0].shape[:2]  # original shape
-
-        # Scale factor (gain)
-        r = min(target_h / h0, target_w / w0)
-        # r = min(r, 1.0)
-
-        new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
-
-        # Compute padding
-        dw = (target_w - new_w) / 2
-        dh = (target_h - new_h) / 2
-        top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
-        left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
-
-        # Resize + pad frames
-        processed_frames = []
-        for frame in frames:
-            # Letterbox
-            resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-            frame = cv2.copyMakeBorder(resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
-            # Normalize and convert to tensor
-            frame = frame.astype(np.float32) / 255.0
-            frame = (frame - mean) / std
-            processed_frames.append(torch.from_numpy(frame).float())
-        
-        # Stack: (N, H, W, C) -> (C, N, H, W)
-        _frames = torch.stack(processed_frames, dim=0)
-        _frames = _frames.permute(3, 0, 1, 2)  # Direct: (N, H, W, C) -> (C, N, H, W)
-
-        # Shapes (orig_shape, (gain, pad))
-        shapes = ((h0, w0), ((r, r), (dw, dh)))
-
-        return _frames, shapes
-
 @torch.no_grad()
-def detect(config, input_path, model_weight, stride):
+def detect(config, input_path, model_weight, save_sampled_indices, stride):
     # Initialize model
-    config["pretrain_path"] = str(model_weight)
-    model = build_yowov3(config)
-    model.to("cuda")
-    model.eval()
-    util.get_info(config, model)
+    model_type, model = load_model(config, model_weight)
 
     class_mapping = config['idx2name']
     clip_length = config['clip_length']
@@ -160,7 +73,7 @@ def detect(config, input_path, model_weight, stride):
     img_size = (img_size, img_size) if isinstance(img_size, int) else img_size
 
     input_path = str(input_path)
-    is_video, is_path = detect_input_type(input_path)
+    is_video, is_path = util.detect_input_type(input_path)
     print(f"input_path: {input_path}, is_video: {is_video}, is_path: {is_path}")
 
     fps = 30
@@ -251,16 +164,23 @@ def detect(config, input_path, model_weight, stride):
 
             start_time = time.perf_counter_ns()
 
-            clip, shapes = _letterbox(frame_list, img_size)
-            clip = clip.unsqueeze(0).to("cuda")
-            outputs = model(clip)
+            clip, shapes = util.letterbox(frame_list, img_size)
+            if model_type == 'torch':
+                clip = clip.unsqueeze(0).to("cuda")
+            else:
+                clip = clip.unsqueeze(0).numpy()
+            outputs = util.run_inference(model_type, model, clip)
             outputs = util.non_max_suppression(outputs, conf_threshold=0.25, iou_threshold=0.7)[0]
 
             original_frame = buffer[-1].copy()
 
             if outputs is not None and len(outputs) > 0:
-                scale(outputs[:, :4], (img_size[0], img_size[1]), shapes[0], shapes[1])
-                original_frame = plot_bboxes(original_frame, outputs[:, :4],
+                if save_sampled_indices:
+                    sampled_indices = [start_idx + i * 7 for i in range(clip_length)]
+                    util.save_sampled_frames(buffer, sampled_indices, start_idx,
+                                        source, base_name, is_video, image_files)
+                util.scale(outputs[:, :4], (img_size[0], img_size[1]), shapes[0], shapes[1])
+                original_frame = util.plot_bboxes(original_frame, outputs[:, :4],
                                              outputs[:, 5], outputs[:, 4], class_mapping)
 
             end_time = time.perf_counter_ns()
@@ -294,7 +214,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', default="test.mp4", type=str, help='input: video file, directory of videos, or directory of images')
     parser.add_argument('--weight', default="best.pth", type=str, help='path to model weight')
+    parser.add_argument('--save_sampled_indices', action='store_true', help='save sampled frames where object is detected')
     parser.add_argument('--stride', type=int, default=1, help='sliding window stride (1=every frame, 7=non-overlapping clips)')
     args = parser.parse_args()
     config = build_config()
-    detect(config, args.source, args.weight, args.stride)
+    detect(config, args.source, args.weight, args.save_sampled_indices, args.stride)

@@ -15,9 +15,12 @@ from thop import profile
 from os import environ
 from platform import system
 
+VIDEO_EXTS = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
+IMAGE_EXTS = {'.jpg', '.jpeg', '.png'}
+
 def build_config():
-    config_file = 'utils/config.yaml'
-    with open(config_file, "r") as file:
+    ucf_config_file = 'utils/ucf_config.yaml'
+    with open(ucf_config_file, "r") as file:
         ucf_config = yaml.load(file, Loader=yaml.SafeLoader) 
     aug_config = ucf_config['augment']
     
@@ -302,6 +305,49 @@ def make_anchors(x, strides, offset=0.5):
         stride_tensor.append(torch.full((h * w, 1), stride, dtype=x[i].dtype, device=x[i].device))
     return torch.cat(anchor_points), torch.cat(stride_tensor)
 
+def letterbox(frames, target_size):
+        """
+        Transform clip (frames) for model input
+        """
+
+        # ImageNet normalization
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        target_h, target_w = target_size
+        h0, w0 = frames[0].shape[:2]  # original shape
+
+        # Scale factor (gain)
+        r = min(target_h / h0, target_w / w0)
+        # r = min(r, 1.0)
+
+        new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
+
+        # Compute padding
+        dw = (target_w - new_w) / 2
+        dh = (target_h - new_h) / 2
+        top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+        left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+
+        # Resize + pad frames
+        processed_frames = []
+        for frame in frames:
+            # Letterbox
+            resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            frame = cv2.copyMakeBorder(resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
+            # Normalize and convert to tensor
+            frame = frame.astype(np.float32) / 255.0
+            frame = (frame - mean) / std
+            processed_frames.append(torch.from_numpy(frame).float())
+        
+        # Stack: (N, H, W, C) -> (C, N, H, W)
+        _frames = torch.stack(processed_frames, dim=0)
+        _frames = _frames.permute(3, 0, 1, 2)  # Direct: (N, H, W, C) -> (C, N, H, W)
+
+        # Shapes (orig_shape, (gain, pad))
+        shapes = ((h0, w0), ((r, r), (dw, dh)))
+
+        return _frames, shapes
+
 def wh2xy(x):
     y = x.clone()
     y[..., 0] = x[..., 0] - x[..., 2] / 2  # top left x
@@ -456,68 +502,31 @@ def box_iou(box1, box2):
 
     return intersection / (area1[:, None] + area2 - intersection)
 
-def draw_bounding_box(image, bboxes, labels, confs, map_labels):
-    """
-    Vẽ bouding box, đầu và image có thể là tensor hoặc np array tuỳ tình huống, đã thiết kế để xử lý cả 2 trường hợp
-    
-    :param image, tensor [1, 3, H, W] (RGB) hoặc numpy array [H, W, 3] (BGR)
-    :param bboxes, tensor [nbox, 4]
-    :param labels, tensor [nbox]
-    :param confs, tensor [nbox]
-    :param map_labels, dict, do labels là số nên cần map thành nhãn (string)
-    """
-    if isinstance(image, torch.Tensor):
-        if image.dim() == 4:
-            image = image.squeeze(0)
-        image = image.permute(1, 2, 0)[:, :, (2, 1, 0)].contiguous()
-        image = image.detach().cpu().numpy()
-    
-    H, W, C = image.shape 
-
-    pre_box   = []
-    meta_data = []
-
-    if bboxes is not None:
-        for box, label, conf in zip(bboxes, labels, confs):
-            box = box.clone().detach()
-            text    = str(map_labels[int(label.item())] + " : " + str(round(conf.item()*100, 2)))
-            pre_box.append(box)
-            meta_data.append([text, H, W])
-
-        res_box = []
-        res_meta_data = []
-
-        for idx1, box1 in enumerate(pre_box):
-            flag = 1
-            for idx2, box2 in enumerate(res_box):
-                iou = box_iou(box1.unsqueeze(0), box2.unsqueeze(0))[0, 0]
-                if (iou >= 0.9):
-                    res_meta_data[idx2].append(meta_data[idx1])
-                    flag = 0
-                    break
-            if flag:
-                res_box.append(box1)
-                res_meta_data.append([meta_data[idx1]])
-
-        for box, meta in zip(res_box, res_meta_data):
-            text = ''
-            for sub_meta in meta:
-                if text == '':
-                    text = sub_meta[0]
-                else:
-                    text += '\n' + sub_meta[0]
-
-            H = meta[0][1]
-            W = meta[0][2]
-            
-            bbox = []
-
-            bbox.append(int(max(0, box[0])))
-            bbox.append(int(max(0, box[1])))
-            bbox.append(int(min(W, box[2])))
-            bbox.append(int(min(H, box[3])))
-
-            box_label(image, bbox, text)
+def plot_bboxes(original_frame, bboxes, labels, conf_scores, mapping):
+    labels = [int(l) for l in labels]
+    for score, cls, bbox in zip(conf_scores, labels, bboxes): # loop over all bboxes
+        class_label = mapping[cls] # class name
+        label = f"{class_label} : {score*100:0.2f}" # bbox label
+        lbl_margin = 3 #label margin
+        img = cv2.rectangle(original_frame, (int(bbox[0]), int(bbox[1])),
+                            (int(bbox[2]), int(bbox[3])),
+                            color=(0, 255, 0),
+                            thickness=1)
+        label_size = cv2.getTextSize(label, # labelsize in pixels 
+                                     fontFace=cv2.FONT_HERSHEY_SIMPLEX, 
+                                     fontScale=1, thickness=1)
+        lbl_w, lbl_h = label_size[0] # label w and h
+        lbl_w += 2* lbl_margin # add margins on both sides
+        lbl_h += 2*lbl_margin
+        img = cv2.rectangle(img, (int(bbox[0]), int(bbox[1])), # plot label background
+                             (int(bbox[0])+lbl_w, int(bbox[1])-lbl_h),
+                             color=(0, 255, 0), 
+                             thickness=-1) # thickness=-1 means filled rectangle
+        cv2.putText(img, label, (int(bbox[0])+ lbl_margin, int(bbox[1])-lbl_margin), # write label to the image
+                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                    fontScale=1.0, color=(255, 255, 255 ),
+                    thickness=1)
+    return img
 
 def smooth(y, f=0.05):
     # Box filter of fraction f
@@ -619,3 +628,78 @@ def strip_optimizer(filename):
     for p in x['model'].parameters():
         p.requires_grad = False
     torch.save(x, f=filename)
+
+def detect_input_type(input_path):
+    if os.path.isfile(input_path):
+        ext = os.path.splitext(input_path)[1].lower()
+        if ext in VIDEO_EXTS:
+            return True, False   # is_video, is_path
+        if ext in IMAGE_EXTS:
+            return False, False
+        raise ValueError("Unsupported file type.")
+
+    if os.path.isdir(input_path):
+        image_found = False
+        video_found = False
+        for f in os.listdir(input_path):
+            p = os.path.join(input_path, f)
+            if not os.path.isfile(p):
+                continue
+            ext = os.path.splitext(f)[1].lower()
+            if ext in IMAGE_EXTS:
+                image_found = True
+            elif ext in VIDEO_EXTS:
+                video_found = True
+
+        if image_found and video_found:
+            raise ValueError("Directory contains both image and video files.")
+        if image_found:
+            return False, True   # image folder
+        if video_found:
+            return True, True    # video folder
+        raise ValueError("Directory contains no supported image or video files.")
+
+    raise ValueError("Input path does not exist.")
+
+def save_sampled_frames(all_frames, sampled_indices, start_idx, input_path, base_name, is_video, image_files):
+    """
+    Save sampled frames to a folder when object is detected
+    """
+    
+    # Create folder for saving frames
+    if is_video:
+        video_base_name = os.path.splitext(os.path.basename(input_path))[0]
+        save_folder = os.path.join(os.path.dirname(input_path), f"{video_base_name}")
+    else:
+        save_folder = os.path.join(input_path, f"{base_name}")
+    
+    os.makedirs(save_folder, exist_ok=True)
+    
+    # Save sampled frames
+    if is_video:
+        # For video, we must save from memory
+        for i, idx in enumerate(sampled_indices):
+            frame_to_save = all_frames[idx]
+            save_path = os.path.join(save_folder, f"{idx:05d}.png")
+            cv2.imwrite(save_path, frame_to_save)
+    else:
+        end_idx = sampled_indices[-1]
+        for idx in range(start_idx, end_idx + 1):
+            list_idx = idx - 1  # Convert frame number to list index
+            if list_idx < len(image_files):
+                original_file = os.path.join(input_path, image_files[list_idx])
+                file_ext = os.path.splitext(image_files[list_idx])[1]
+                save_path = os.path.join(save_folder, f"{idx:05d}{file_ext}")
+                shutil.copy2(original_file, save_path)
+    
+    print(f"Saved {len(sampled_indices)} frames to {save_folder}")
+
+def run_inference(model_type, model, model_input):
+    if model_type == 'torch':
+        with torch.no_grad():
+            return model(model_input)
+    else:
+        input_name  = model.get_inputs()[0].name
+        outputs  = model.run(None, {input_name: model_input})
+        
+        return torch.from_numpy(outputs[0])
