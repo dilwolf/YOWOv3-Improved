@@ -1,1 +1,0 @@
-## Paste your your custom *config.yaml* files here to easily utilizing them when converting to ONNX with *export_onnx.py* script.
