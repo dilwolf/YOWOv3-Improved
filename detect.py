@@ -3,14 +3,53 @@ import cv2
 import yaml
 import time
 import torch
+import shutil
 import argparse
 import numpy as np
 from utils import util
 from pathlib import Path
+from collections import deque
 from model.TSN.YOWOv3 import build_yowov3
 
+import os
+
+VIDEO_EXTS = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
+IMAGE_EXTS = {'.jpg', '.jpeg', '.png'}
+
+def detect_input_type(input_path):
+    if os.path.isfile(input_path):
+        ext = os.path.splitext(input_path)[1].lower()
+        if ext in VIDEO_EXTS:
+            return True, False   # is_video, is_path
+        if ext in IMAGE_EXTS:
+            return False, False
+        raise ValueError("Unsupported file type.")
+
+    if os.path.isdir(input_path):
+        image_found = False
+        video_found = False
+        for f in os.listdir(input_path):
+            p = os.path.join(input_path, f)
+            if not os.path.isfile(p):
+                continue
+            ext = os.path.splitext(f)[1].lower()
+            if ext in IMAGE_EXTS:
+                image_found = True
+            elif ext in VIDEO_EXTS:
+                video_found = True
+
+        if image_found and video_found:
+            raise ValueError("Directory contains both image and video files.")
+        if image_found:
+            return False, True   # image folder
+        if video_found:
+            return True, True    # video folder
+        raise ValueError("Directory contains no supported image or video files.")
+
+    raise ValueError("Input path does not exist.")
+
 def build_config():
-    ucf_config_file = 'utils/best_falldown.yaml'
+    ucf_config_file = 'utils/YAML/falldown_best.yaml'
     with open(ucf_config_file, "r") as file:
         ucf_config = yaml.load(file, Loader=yaml.SafeLoader) 
     
@@ -107,146 +146,155 @@ def _letterbox(frames, target_size):
         return _frames, shapes
 
 @torch.no_grad()
-def detect(config, input_path, model_weight):
-    # Initialize the model
+def detect(config, input_path, model_weight, stride):
+    # Initialize model
     config["pretrain_path"] = str(model_weight)
     model = build_yowov3(config)
     model.to("cuda")
     model.eval()
     util.get_info(config, model)
+
     class_mapping = config['idx2name']
     clip_length = config['clip_length']
     img_size = config['img_size']
     img_size = (img_size, img_size) if isinstance(img_size, int) else img_size
 
-    # Determine input type: video or image folder
     input_path = str(input_path)
-    print(f"input_path: {input_path}, {type(input_path)}")
-    if os.path.isfile(input_path) and input_path.lower().endswith(('mp4', 'avi', 'mov', 'mkv')):
-        is_video = True
-    elif os.path.isdir(input_path):
-        is_video = False
+    is_video, is_path = detect_input_type(input_path)
+    print(f"input_path: {input_path}, is_video: {is_video}, is_path: {is_path}")
+
+    fps = 30
+    buffer_size = (clip_length - 1) * 7 + 1
+
+    # Build list of sources to process
+    if is_video and is_path:
+        # Directory of videos — process each independently
+        video_files = sorted([f for f in os.listdir(input_path)
+                               if os.path.splitext(f)[1].lower() in VIDEO_EXTS])
+        if not video_files:
+            raise ValueError("No video files found in the directory.")
+        sources = [os.path.join(input_path, f) for f in video_files]
+    elif is_video and not is_path:
+        # Single video file
+        sources = [input_path]
     else:
-        raise ValueError("Input must be a video file or a directory containing image frames.")
+        # Single image folder — treat as one source
+        sources = [input_path]
 
-    fps = 30  # Manual FPS for output video
-    frame_width, frame_height = img_size  # Will be updated if video
+    for source in sources:
+        print(f"\n--- Processing: {source} ---")
 
-    # Generate output filename
-    if is_video:
-        base_name = os.path.splitext(os.path.basename(input_path))[0]
-        directory_path = os.path.dirname(input_path)
-        output_filename = f"{directory_path}/{base_name}_output.avi"
-        cap = cv2.VideoCapture(input_path)
-        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    else:
-        base_name = Path(input_path).name
-        output_filename = f"{input_path}/{base_name}_output.avi"
-        # Get image list
-        img_extensions = ('.png', '.jpg', '.jpeg')
-        image_files = sorted([f for f in os.listdir(input_path) if f.lower().endswith(img_extensions)]) # file names 05:d{img_ext} format
-        if not image_files:
-            raise ValueError("No image files found in the directory.")
-        # Read first image to get dimensions
-        first_img_path = os.path.join(input_path, image_files[0])
-        sample_img = cv2.imread(first_img_path)
-        if sample_img is None:
-            raise ValueError(f"Could not read first image: {first_img_path}")
-        frame_height, frame_width = sample_img.shape[:2]
-
-    # Set output video
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    out = cv2.VideoWriter(output_filename, fourcc, fps, (frame_width, frame_height))
-
-    # Buffer to store all frames for sliding window
-    all_frames = []
-    img_iter = iter(image_files) if not is_video else None
-
-    # Read all frames first
-    while True:
+        # --- Setup per-source output ---
         if is_video:
-            ret, frame = cap.read()
-            if not ret:
-                break
+            base_name = os.path.splitext(os.path.basename(source))[0]
+            directory_path = os.path.dirname(source) or "."
+            output_filename = os.path.join(directory_path, f"{base_name}_output.avi")
+            cap = cv2.VideoCapture(source)
+            frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            image_files = None
         else:
-            try:
-                img_name = next(img_iter)
-                img_path = os.path.join(input_path, img_name)
-                frame = cv2.imread(img_path)
+            base_name = Path(source).name
+            output_filename = os.path.join(source, f"{base_name}_output.avi")
+            img_extensions = ('.png', '.jpg', '.jpeg')
+            image_files = sorted([f for f in os.listdir(source)
+                                   if f.lower().endswith(img_extensions)])
+            if not image_files:
+                raise ValueError("No image files found in the directory.")
+            first_img = cv2.imread(os.path.join(source, image_files[0]))
+            if first_img is None:
+                raise ValueError(f"Could not read first image: {image_files[0]}")
+            frame_height, frame_width = first_img.shape[:2]
+            cap = None
+
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        out = cv2.VideoWriter(output_filename, fourcc, fps, (frame_width, frame_height))
+
+        # --- Frame reader ---
+        img_iter = iter(image_files) if not is_video else None
+
+        def read_next_frame():
+            if is_video:
+                ret, frame = cap.read()
+                return frame if ret else None
+            else:
+                while True:
+                    try:
+                        img_name = next(img_iter)
+                        frame = cv2.imread(os.path.join(source, img_name))
+                        if frame is None:
+                            print(f"Warning: skipping unreadable image {img_name}")
+                            continue
+                        return frame
+                    except StopIteration:
+                        return None
+
+        # --- Pre-fill buffer ---
+        buffer = deque(maxlen=buffer_size)
+        frame_idx = 0
+
+        while len(buffer) < buffer_size:
+            frame = read_next_frame()
+            if frame is None:
+                break
+            buffer.append(frame)
+            frame_idx += 1
+
+        print(f"Buffer pre-filled with {len(buffer)} frames (need {buffer_size})")
+
+        start_idx = 0
+
+        # --- Sliding window inference ---
+        while len(buffer) == buffer_size:
+            frame_list = [cv2.cvtColor(buffer[i * 7], cv2.COLOR_BGR2RGB)
+                          for i in range(clip_length)]
+
+            start_time = time.perf_counter_ns()
+
+            clip, shapes = _letterbox(frame_list, img_size)
+            clip = clip.unsqueeze(0).to("cuda")
+            outputs = model(clip)
+            outputs = util.non_max_suppression(outputs, conf_threshold=0.25, iou_threshold=0.7)[0]
+
+            original_frame = buffer[-1].copy()
+
+            if outputs is not None and len(outputs) > 0:
+                scale(outputs[:, :4], (img_size[0], img_size[1]), shapes[0], shapes[1])
+                original_frame = plot_bboxes(original_frame, outputs[:, :4],
+                                             outputs[:, 5], outputs[:, 4], class_mapping)
+
+            end_time = time.perf_counter_ns()
+            print(f"Frame {start_idx} - Time: {(end_time - start_time) / 1_000_000:.2f} ms")
+
+            out.write(original_frame)
+
+            # Slide window by stride
+            filled = 0
+            for _ in range(stride):
+                frame = read_next_frame()
                 if frame is None:
-                    print(f"Warning: Failed to load image {img_path}, skipping.")
-                    continue
-            except StopIteration:
-                break
-        
-        all_frames.append(frame)
+                    break
+                buffer.append(frame)  # deque auto-drops oldest
+                frame_idx += 1
+                filled += 1
 
-    if is_video:
-        cap.release()
+            if filled < stride:
+                break  # source exhausted, can't fill full stride
 
-    print(f"Total frames loaded: {len(all_frames)}")
+            start_idx += stride
 
-    # Process with sliding window
-    for start_idx in range(len(all_frames)):
-        # Sample frames: start_idx, start_idx+7, start_idx+14, ...
-        frame_list = []
-        sampled_indices = []
-        
-        for i in range(clip_length):
-            sample_idx = start_idx + i * 7
-            if sample_idx >= len(all_frames):
-                break
-            frame_list.append(cv2.cvtColor(all_frames[sample_idx], cv2.COLOR_BGR2RGB))
-            sampled_indices.append(sample_idx)
-        
-        # Skip if we don't have enough frames for a full clip
-        if len(frame_list) < clip_length:
-            break
+        out.release()
+        if is_video and cap is not None:
+            cap.release()
 
-        start_time = time.perf_counter_ns()
-
-        # Prepare model input
-        clip, shapes = _letterbox(frame_list, img_size)
-        clip = clip.unsqueeze(0).to("cuda")  # [batch, C, T, H, W]
-
-        # Model Inference
-        outputs = model(clip)
-        outputs = util.non_max_suppression(outputs, conf_threshold=0.25, iou_threshold=0.7)[0]
-
-        # Use the middle frame or last sampled frame for visualization
-        original_frame = all_frames[start_idx].copy()
-
-        if outputs is not None and len(outputs) > 0:
-            
-            # Scale bounding boxes
-            scale(outputs[:, :4], (img_size[0], img_size[1]), shapes[0], shapes[1])
-            bboxes = outputs[:, :4]
-            original_frame = plot_bboxes(original_frame, bboxes, outputs[:, 5], outputs[:, 4], class_mapping)
-
-        end_time = time.perf_counter_ns()
-        execution_time = (end_time - start_time) / 1_000_000
-        print(f"Frame {start_idx} - Sampled indices: {sampled_indices} - Execution time: {execution_time:.2f} ms")
-
-        # Write to output video
-        out.write(original_frame)
-
-    out.release()
-    print(f"Output video saved to: {output_filename}")
-            
-    # Cleanup
-    if is_video:
-        cap.release()
-    out.release()
-    # cv2.destroyAllWindows()
-
-    print(f"Output saved to: {output_filename}")
+        print(f"Output saved to: {output_filename}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--source', default="test.mp4", type=str, help='input is a video or directory of images')
-    parser.add_argument('--weight', default="best.pth", type=str, help='path to weight')
+    parser.add_argument('--source', default="test.mp4", type=str, help='input: video file, directory of videos, or directory of images')
+    parser.add_argument('--weight', default="best.pth", type=str, help='path to model weight')
+    parser.add_argument('--stride', type=int, default=1, help='sliding window stride (1=every frame, 7=non-overlapping clips)')
     args = parser.parse_args()
     config = build_config()
-    detect(config, args.source , args.weight)
+    detect(config, args.source, args.weight, args.stride)
