@@ -1,10 +1,5 @@
 # YOWOv3-Improved: An Improved and Extended codebase of original [YOWOv3](https://github.com/hope1337/YOWOv3) for Human Action Detection and Recognition
 
-This repository is an improved codebase version of [YOWOv3](https://github.com/hope1337/YOWOv3), originally proposed in the [paper](https://arxiv.org/abs/2408.02623). The main aim is to make cleaner and more extensible codebase:
-
-> **⚠️Note:** This code has been used in real-world projects and it seems working well. However, it may still contain limitations or mistakes. If you find any issues or have suggestions, feel free to open a discussion or issue — I'm happy to talk about it.
-
----
 ## What's new in YOWOv3-Improved and planned to add in the future
 
 Compared to the original [YOWOv3](https://github.com/hope1337/YOWOv3) codebase, this repository introduces the following improvements:
