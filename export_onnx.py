@@ -44,7 +44,7 @@ torch.onnx.export(
     input_names=['Inputs'],
     output_names=['Outputs'],
     export_params=True,
-    opset_version=17,
+    opset_version=19,
     do_constant_folding=False,
     keep_initializers_as_inputs=False,
     dynamic_axes={
