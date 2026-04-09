@@ -55,7 +55,7 @@ class DFLHead(torch.nn.Module):
             self.img_size = (img_size, img_size)
         self.nl = len(filters)  # number of detection layers
         self.no = nc + self.ch * 4  # number of outputs per anchor
-        self.stride = torch.zeros(self.nl)  # strides computed during build
+        self.register_buffer('stride', torch.zeros(self.nl))  # strides computed during build
         self.interchannels = interchannels
  
         self.dfl = DFL(self.ch)

@@ -90,7 +90,7 @@ class YOWOv3(torch.nn.Module):
                                       self.inter_channels_detection, 
                                       [self.inter_channels_fusion for x in range(len(out_channels_2D))], 
                                       mode=self.mode)
-        self.detection_head.stride = torch.tensor([max(img_size) / x[0].shape[-2] for x in out_2D])
+        self.detection_head.stride.copy_(torch.tensor([max(img_size) / x[0].shape[-2] for x in out_2D]))
         self.stride = self.detection_head.stride
 
         if pretrain_path is not None:
