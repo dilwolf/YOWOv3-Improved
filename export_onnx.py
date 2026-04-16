@@ -6,16 +6,15 @@ from model.TSN.YOWOv3 import build_yowov3
 import warnings
 warnings.filterwarnings("ignore")
 
-name = "best_falldown"
-output_onnx_path = f"{name}_onnx.onnx"
-model_weight = f"{name}.pth" 
+name = "falldown_best"
+output_onnx_path = f"{name}.onnx"
+model_weight = f"{name}.pth"
 
 def build_config():
     ucf_config_file = f'utils/YAML/{name}.yaml'
     print(f"config_file: {ucf_config_file}")
     with open(ucf_config_file, "r") as file:
-        ucf_config = yaml.load(file, Loader=yaml.SafeLoader)    
-    return ucf_config
+        return yaml.load(file, Loader=yaml.SafeLoader)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"device: {device}")
@@ -23,18 +22,16 @@ print(f"device: {device}")
 config = build_config()
 config["pretrain_path"] = model_weight
 model = build_yowov3(config)
-pretrain_path = config["pretrain_path"]
-print(f"model_weight: {pretrain_path}")
+print(f"model_weight: {config['pretrain_path']}")
+
 imgh_size = config['img_size']
 clip_length = config['clip_length']
-model.to(device)
-model.eval()
+model.to(device).eval()
 
-dummy_input = torch.zeros(1, 3, clip_length, imgh_size[0], imgh_size[1])
+dummy_input = torch.zeros(1, 3, clip_length, imgh_size[0], imgh_size[1], device=device)
 print(f"dummy_input: {dummy_input.shape}")
-dummy_input = dummy_input.to(device)
 
-# Export to ONNX
+# Export
 print("Exporting to ONNX...")
 torch.onnx.export(
     model,
@@ -43,6 +40,7 @@ torch.onnx.export(
     verbose=False,
     input_names=['Inputs'],
     output_names=['Outputs'],
+    dynamo=False,  # don't save .data file 
     export_params=True,
     opset_version=19,
     do_constant_folding=False,
@@ -58,21 +56,20 @@ torch.onnx.export(
         }
     }
 )
-print(f"✓ ONNX model exported as: {output_onnx_path}")
+print(f"✓ Exported: {output_onnx_path}")
 
-# Simplify ONNX model
+# Load & verify (merges any .data sidecar)
 print("\nSimplifying ONNX model...")
-# Checks
-onnx_model = onnx.load(output_onnx_path)  # load onnx model
-onnx.checker.check_model(onnx_model)  # check onnx model
+onnx_model = onnx.load(output_onnx_path, load_external_data=True)
+onnx.checker.check_model(onnx_model)
 
 try:
-    print('\nStarting to simplify ONNX...')
+    print("Starting simplification...")
     onnx_model, check = onnxsim.simplify(onnx_model)
-    assert check, 'assert check failed'
+    assert check, "simplify check failed"
 except Exception as e:
-    print(f'Simplifier failure: {e}')
+    print(f"Simplifier failure: {e}")
 
-# print(onnx.helper.printable_graph(onnx_model.graph))  # print a human readable model
-onnx.save(onnx_model, output_onnx_path)
-print(f"ONNX export success, saved as {output_onnx_path}")
+# Save as single file (no .data sidecar)
+onnx.save(onnx_model, output_onnx_path, save_as_external_data=False)
+print(f"✓ Saved: {output_onnx_path}")
