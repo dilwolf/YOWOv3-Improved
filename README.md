@@ -9,7 +9,7 @@ Compared to the original [YOWOv3](https://github.com/hope1337/YOWOv3) codebase, 
 - [x]  **Validation Logic** — Proper validation loop integrated into training, allowing you to monitor performance on a held-out set during training.
 - [x]  **Updated TAL Loss** — Modified TAL (Task-Aligned Learning) loss to help the model learn from background images and significantly reduce false positives in predictions. However, I could not touch SimOTA loss because the updating TAL was just enogh for me. 
 - [x]  **Cleaner and More Extensible Codebase** — The overall structure has been reorganized to make it easier to plug in custom datasets, backbones, and other components.
-- [ ] **Rectangle input size** (working on) — Extending model input size to different input resolutions (e.g., 384x640) which is very beneficial in Surveiallnce systems (right now, model supports square input size e.g., 640x640)
+- [x] **Rectangle input size** — Extending model input size from square input size (e.g., 640x640) to rectangular input size (e.g., 384x640) which is very beneficial in Surveiallnce systems.
 - [ ] **Reproducing 3DCNNs results** (working on) — Working on reproducing [Efficient-3DCNNs](https://github.com/okankop/Efficient-3DCNNs) results to make codebase reusable and improve accuracy (hopefully...). This will be posted in a seperate repo and will be announced here.
 ---
 
@@ -35,7 +35,7 @@ git clone https://github.com/dilwolf/YOWOv3-Improved.git
 cd YOWOv3-Improved
 ```
 
-Install the latest PyTorch and Python versions (tested PyTorch 2.4+ and Python 3.10+):
+Install the latest PyTorch and Python versions (tested PyTorch 2.5+ and Python 3.10+):
 ```bash
 pip install torch
 ```
@@ -46,13 +46,13 @@ pip install torch
 
 Almost all configurations are controlled through a config file as in the original [YOWOv3](https://github.com/hope1337/YOWOv3). Sample config files are provided in the `util/config.yaml` file.
 
-### Training/Multi-GPU Training with DDP
+### Multi-GPU Training with DDP
 ```bash
 torchrun --nproc_per_node=$ main.py --train
 ```
 Replace `$` with the number of GPUs available on your machine.
 
-### Simply run for a single GPU:
+### For a single GPU:
 ```bash
 python main.py --train
 ```

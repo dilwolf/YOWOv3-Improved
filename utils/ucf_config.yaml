@@ -103,7 +103,7 @@ mode              : decoupled
 interchannels     : [192, 192, 192]
 pretrain_path     : ema_epoch_7.pth
 data_root         : /path/to/your/main_dataset_folder
-img_size          : (640, 640)
+img_size          : (384, 640)
 clip_length       : 5
 num_workers       : 20
 acc_grad          : 16

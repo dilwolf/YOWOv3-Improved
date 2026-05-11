@@ -88,9 +88,12 @@ class YOWOv3(torch.nn.Module):
 
         self.detection_head = DFLHead(num_classes, img_size,
                                       self.inter_channels_detection, 
-                                      [self.inter_channels_fusion for x in range(len(out_channels_2D))], 
-                                      mode=self.mode)
-        self.detection_head.stride.copy_(torch.tensor([max(img_size) / x[0].shape[-2] for x in out_2D]))
+                                      [self.inter_channels_fusion for x in range(len(out_channels_2D))], mode=self.mode)
+        
+        # Choose one of them: Height or Width in the below for stride size calculation. The both lines are equivalent.
+        self.detection_head.stride.copy_(torch.tensor([img_size[0] / x[0].shape[-2] for x in out_2D]))
+        # self.detection_head.stride.copy_(torch.tensor([img_size[1] / x[0].shape[-1] for x in out_2D]))
+        
         self.stride = self.detection_head.stride
 
         if pretrain_path is not None:
