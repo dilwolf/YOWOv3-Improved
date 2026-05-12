@@ -113,7 +113,7 @@ class TAL:
         bboxes = (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype)
         target_bboxes, target_scores, fg_mask = self.assign(scores, bboxes,gt_labels, gt_bboxes, mask_gt, anchor_points * stride_tensor, stride_tensor)
         
-        mask = target_scores.gt(0)[fg_mask]
+        # mask = target_scores.gt(0)[fg_mask]
 
         target_bboxes /= stride_tensor
         # target_scores_sum = target_scores.sum()

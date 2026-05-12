@@ -2,8 +2,8 @@ import os
 import csv
 import copy
 import tqdm
+import yaml
 import torch
-import shutil
 import datetime
 import numpy as np
 from utils import util
@@ -14,9 +14,6 @@ from model.TSN.YOWOv3 import build_yowov3
 from utils.loss import build_loss, LinearWarmup
 
 def train_model(config, aug_config, args):
-    # Save configs
-    shutil.copyfile(config['config_path'], os.path.join(config['save_folder'], 'config.yaml'))
-
     # Build train dataset & loader
     sampler = None
     dataset = Dataset(config=config, aug_config=aug_config, phase='train')
@@ -29,6 +26,18 @@ def train_model(config, aug_config, args):
     device = torch.device("cuda", args.local_rank)
     model = build_yowov3(config)
     model.to(device)
+
+    # Save effective config after model loading, including CLI overrides.
+    # Exclude backbone/loss lookup tables — active choices are captured by backbone2D/backbone3D/loss keys.
+    if args.local_rank == 0:
+        class _InlineListDumper(yaml.Dumper):
+            pass
+        _InlineListDumper.add_representer(
+            list, lambda d, v: d.represent_sequence('tag:yaml.org,2002:seq', v, flow_style=True)
+        )
+        saved_config = {**config, 'batch_size': args.batch_size}
+        with open(os.path.join(config['save_folder'], 'config.yaml'), 'w') as f:
+            yaml.dump(saved_config, f, Dumper=_InlineListDumper, default_flow_style=False, sort_keys=False)
 
     # EMA only on rank 0
     ema = util.ModelEMA(model) if args.local_rank == 0 else None

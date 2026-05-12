@@ -106,6 +106,7 @@ data_root         : /path/to/your/main_dataset_folder
 img_size          : [384, 640] # (Height, Width). Always use List
 clip_length       : 5
 num_workers       : 20
+batch_size        : 20
 acc_grad          : 16
 lr                : 0.0001
 weight_decay      : 0.0005
