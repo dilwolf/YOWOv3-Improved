@@ -4,6 +4,7 @@ import copy
 import tqdm
 import yaml
 import torch
+import wandb
 import datetime
 import numpy as np
 from utils import util
@@ -70,7 +71,27 @@ def train_model(config, aug_config, args):
 
     scaler = torch.amp.GradScaler()
     best_metric = 0.0
-    
+
+    if args.wandb and args.local_rank == 0:
+        wandb.init(
+            project=args.project,
+            name=args.run_name,
+            mode="offline", # save logs locally
+            dir="weights/model_checkpoint/",
+            config={
+                'backbone2D': config['backbone2D'], 'backbone3D': config['backbone3D'],
+                'fusion_module': config['fusion_module'], 'dataset': config['data_root'],
+                'img_size': config['img_size'], 'clip_length': config['clip_length'],
+                'lr': config['lr'], 'weight_decay': config['weight_decay'],
+                'batch_size': args.batch_size, 'acc_grad': config['acc_grad'],
+                'max_epoch': config['max_epoch'],
+                'scale_cls_loss': config.get('scale_cls_loss'),
+                'scale_box_loss': config.get('scale_box_loss'),
+                'scale_dfl_loss': config.get('scale_dfl_loss'),
+                'class_names': config['idx2name'],
+            }
+        )
+
     with open('weights/model_checkpoint/results.csv', 'w') as log:
         if args.local_rank == 0:
             logger = csv.DictWriter(log, fieldnames=['epoch', 'box', 'cls', 'dfl', 'mAP', 'mAP@50', 'Recall'])
@@ -158,7 +179,7 @@ def train_model(config, aug_config, args):
 
             # Evaluation and saving (only on rank 0)
             if args.local_rank == 0:
-                m_rec, map50, map50_90 = eval_model(config=config, args=args, model=ema.ema)
+                m_rec, map50, map50_90, ap50_all, ap_all = eval_model(config=config, args=args, model=ema.ema)
                 logger.writerow({'epoch': str(epoch).zfill(3),
                                 'box': str(f'{avg_box_loss.avg:.3f}'),
                                 'cls': str(f'{avg_cls_loss.avg:.3f}'),
@@ -167,12 +188,31 @@ def train_model(config, aug_config, args):
                                 'mAP@50': str(f'{map50:.3f}'),
                                 'Recall': str(f'{m_rec:.3f}')})
                 log.flush()
+                if args.wandb:
+                    per_class = {}
+                    for c, name in config['idx2name'].items():
+                        if not np.isnan(ap50_all[c]): per_class[f'val/AP50/{name}']    = float(ap50_all[c])
+                        if not np.isnan(ap_all[c]):   per_class[f'val/AP50_95/{name}'] = float(ap_all[c])
+                    wandb.log({
+                        'epoch': epoch,
+                        'train/loss_box': avg_box_loss.avg,
+                        'train/loss_cls': avg_cls_loss.avg,
+                        'train/loss_dfl': avg_dfl_loss.avg,
+                        'train/loss': avg_box_loss.avg + avg_cls_loss.avg + avg_dfl_loss.avg,
+                        'train/lr': optimizer.param_groups[0]['lr'],
+                        'val/recall': m_rec,
+                        'val/mAP50': map50,
+                        'val/mAP50_95': map50_90,
+                        **per_class,
+                    })
                 save = {
                     'epoch': epoch,
                     'class_names': config['idx2name'],
                     'model': copy.deepcopy(ema.ema.state_dict())
                 }
                 if map50_90 > best_metric:
+                    if args.wandb:
+                        wandb.run.summary.update({'best_mAP50_95': map50_90, 'best_mAP50': map50, 'best_epoch': epoch})
                     best_metric = map50_90
                     torch.save(save, os.path.join(save_folder, 'best.pth'))
                     print(f"New best {best_metric:.4f}, saved.")
@@ -183,6 +223,9 @@ def train_model(config, aug_config, args):
             if args.distributed:
                 torch.distributed.barrier()
     
+    if args.wandb and args.local_rank == 0:
+        wandb.finish()
+
     # if args.strip_optimizer and args.local_rank == 0:
     #     util.strip_optimizer(os.path.join(save_folder, 'best.pth'))  # strip optimizers
     #     util.strip_optimizer(os.path.join(save_folder, 'last.pth'))  # strip optimizers
@@ -267,20 +310,29 @@ def eval_model(config, args, model=None):
 
     # Compute metrics
     metrics = [torch.cat(x, 0).cpu().numpy() for x in zip(*metrics)]  # to numpy
+    n_classes = len(class_names)
+    ap50_all = np.full(n_classes, float('nan'))
+    ap_all   = np.full(n_classes, float('nan'))
+    tp = np.zeros(n_classes)
+    fp = np.zeros(n_classes)
     if len(metrics) and metrics[0].any():
-        tp, fp, m_rec, map50, map50_90 = util.compute_ap(*metrics)       
+        tp, fp, m_rec, map50, map50_90, ap50_cls, ap_cls, cls_indices = util.compute_ap(*metrics)
+        ap50_all[cls_indices] = ap50_cls
+        ap_all[cls_indices]   = ap_cls
     print(('%10s' + '%10s' + '%10.3g' * 3) % ('', '',  m_rec, map50, map50_90), flush=True)
-    def print_metrics(tp, fp, class_names):
-        print("=" * 55, flush=True)
-        print(f"{'Class':<20}{'True Positives':>15}{'False Positives':>20}", flush=True)
-        print("-" * 55, flush=True)
+    def print_metrics(tp, fp, ap50, ap, class_names):
+        print("=" * 75, flush=True)
+        print(f"{'Class':<20}{'True Positives':>13}{'False Positives':>17}{'AP@0.5':>12}{'AP@0.5:0.95':>13}", flush=True)
+        print("-" * 75, flush=True)
         for c in range(len(class_names)):
-            print(f"{class_names[c]:<20}{int(tp[c]):>15}{int(fp[c]):>20}", flush=True)
-        print("=" * 55, flush=True)
-    print_metrics(tp, fp, class_names)
+            ap50_str = f"{ap50[c]:.3f}" if not np.isnan(ap50[c]) else "  N/A"
+            ap_str   = f"{ap[c]:.3f}"   if not np.isnan(ap[c])   else "  N/A"
+            print(f"{class_names[c]:<20}{int(tp[c]):>13}{int(fp[c]):>17}{ap50_str:>12}{ap_str:>13}", flush=True)
+        print("=" * 75, flush=True)
+    print_metrics(tp, fp, ap50_all, ap_all, class_names)
     model.float()
 
-    return float(m_rec), float(map50), float(map50_90)
+    return float(m_rec), float(map50), float(map50_90), ap50_all, ap_all
 
 def main():
     parser = ArgumentParser()
@@ -289,6 +341,9 @@ def main():
     parser.add_argument('--train', action='store_true')
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--strip_optimizer', action='store_true')
+    parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging')
+    parser.add_argument('--project', type=str, default='yowov3', help='W&B project name')
+    parser.add_argument('--run_name', type=str, default=None, help='W&B run name')
     args = parser.parse_args()
 
     # ---------------------------
@@ -335,7 +390,16 @@ def main():
         if args.eval:
             # Only rank 0 should run evaluation in distributed mode
             if not args.distributed or args.local_rank == 0:
-                eval_model(config=config, args=args)
+                if args.wandb:
+                    wandb.init(project=args.project, name=args.run_name, job_type='eval')
+                m_rec, map50, map50_90, ap50_all, ap_all = eval_model(config=config, args=args)
+                if args.wandb:
+                    per_class = {}
+                    for c, name in config['idx2name'].items():
+                        if not np.isnan(ap50_all[c]): per_class[f'val/AP50/{name}']    = float(ap50_all[c])
+                        if not np.isnan(ap_all[c]):   per_class[f'val/AP50_95/{name}'] = float(ap_all[c])
+                    wandb.log({'val/recall': m_rec, 'val/mAP50': map50, 'val/mAP50_95': map50_90, **per_class})
+                    wandb.finish()
 
             if args.distributed:
                 torch.distributed.barrier()

@@ -602,7 +602,7 @@ def compute_ap(tp, conf, pred_cls, target_cls, eps=1e-16):
     # m_pre, m_rec = p.mean(), r.mean()
     m_rec = r.mean()
     map50, map50_90 = ap50.mean(), ap.mean()
-    return tp, fp, m_rec, map50, map50_90
+    return tp, fp, m_rec, map50, map50_90, ap50, ap, unique_classes.astype(int)
 
 def get_info(config, model):
     device = "cuda" if torch.cuda.is_available() else "cpu"
