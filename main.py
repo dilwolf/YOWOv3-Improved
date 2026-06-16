@@ -62,15 +62,29 @@ def train_model(config, aug_config, args):
     optimizer.add_param_group({'params': g[1], 'weight_decay': 0.0})
     optimizer.add_param_group({'params': g[2], 'weight_decay': 0.0})
 
-    warmup = LinearWarmup(config)
     acc_grad = config['acc_grad']
+    """
+    --- Dynamic LR warm-up ---------------------------------------------------
+    Warm-up in optimizer steps, derived from warmup_epochs × steps-per-epoch.
+    Keeps warm-up duration correct across dataset sizes; a fixed max_step_warmup
+    would silently never complete if it exceeded one epoch's worth of updates.
+    """
+    updates_per_epoch = max(1, len(train_loader) // acc_grad)
+    warmup_epochs = config.get('warmup_epochs', 3)
+    warmup_steps = warmup_epochs * updates_per_epoch
+    warmup = LinearWarmup(config, max_step=warmup_steps)
+    # Decay schedule is in EPOCHS, so it is already invariant to dataset size.
     adjust_schedule = set(config['adjustlr_schedule'])
     lr_decay = config['lr_decay']
     max_epoch = config['max_epoch']
     save_folder = config['save_folder']
+    if args.local_rank == 0:
+        print(f"[lr] updates/epoch={updates_per_epoch}  warmup={warmup_epochs} epoch(s)="
+              f"{warmup_steps} updates  decay@epochs={sorted(adjust_schedule)} x{lr_decay}")
 
     scaler = torch.amp.GradScaler()
     best_metric = 0.0
+    total_updates = 0  # cumulative optimizer updates across all epochs (drives warm-up)
 
     if args.wandb and args.local_rank == 0:
         wandb.init(
@@ -112,7 +126,6 @@ def train_model(config, aug_config, args):
                 print(('\n' + '%10s' * 5) % ('Epoch', 'GPU_mem', 'Box Loss', 'Cls Loss', 'DFL Loss'))
                 p_bar = tqdm.tqdm(p_bar, total=len(train_loader))     
 
-            updates = 0
             optimizer.zero_grad(set_to_none=True)
 
             for it, (clips, bboxes, labels, _) in enumerate(p_bar, start=1):
@@ -173,9 +186,9 @@ def train_model(config, aug_config, args):
 
                 # Optimizer step every `acc_grad` steps
                 if it % acc_grad == 0:
-                    updates += 1
-                    if epoch == 1:
-                        warmup(optimizer, updates)
+                    total_updates += 1
+                    if total_updates <= warmup_steps:
+                        warmup(optimizer, total_updates)
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_value_(model.parameters(), 2.0)
                     scaler.step(optimizer)

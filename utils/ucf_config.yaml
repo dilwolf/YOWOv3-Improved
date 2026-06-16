@@ -110,8 +110,9 @@ batch_size        : 20
 acc_grad          : 16
 lr                : 0.0001
 weight_decay      : 0.0005
-max_step_warmup   : 700
-adjustlr_schedule : [1, 2, 3, 4, 5]
+warmup_epochs     : 3            # warm-up length in EPOCHS; auto-converted to optimizer-updates at runtime (scales with any dataset size)
+max_step_warmup   : 700          # legacy fallback only; ignored when warmup_epochs drives warm-up
+adjustlr_schedule : [60, 80]     # decay LR at these EPOCHS (invariant to dataset size; scale with max_epoch)
 max_epoch         : 100
 lr_decay          : 0.5
 save_folder       : weights/model_checkpoint

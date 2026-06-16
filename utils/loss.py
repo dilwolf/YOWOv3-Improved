@@ -5,15 +5,18 @@ import torch.nn.functional as F
 from torch.nn.functional import cross_entropy, one_hot
 
 class LinearWarmup():
-    def __init__(self, config):
-        self.max_step = config['max_step_warmup']
+    def __init__(self, config, max_step=None):
+        # Warmup duration in optimizer steps.
+        # Prefer dynamically computed max_step over config fallback.
+        self.max_step = max_step if max_step is not None else config.get('max_step_warmup', 1000)
         self.lr_init  = config['lr']
     
     def __call__(self, optimizer, step):
-        
+        # No-op after warmup ends.
         if (step > self.max_step):
             return
         
+        # Scale LR linearly from 0 → lr_init over max_step steps.
         for param_group in optimizer.param_groups:
             param_group['lr'] = self.lr_init * step / self.max_step
 
