@@ -19,9 +19,21 @@ class CAM_Module(nn.Module):
                 attention: B X C X C
         """
         m_batchsize, C, height, width = x.size()
+        """
+        Scaled dot-product attention. The channel Gram matrix sums over H*W spatial
+        positions, so its raw magnitude ~ (H*W) * activation^2 and based on data, it sometimes overflows fp16
+        (max 65504) at the finest level (H*W=6400) -> Inf -> `max(energy)-energy`
+        makes Inf-Inf=NaN. We divide the scores by sqrt(H*W) (the dot-product
+        dimension), exactly as scaled-dot-product attention does, so they stay
+        bounded in ANY precision (fp16 training, fp16/int8 TRT inference). The scale
+        is applied to the bmm INPUT, not the output: scaling after an fp16 bmm is too
+        late (it would already be Inf). softmax + the learnable gamma absorb the
+        temperature, so no denormalization is needed.
+        """
         proj_query = x.view(m_batchsize, C, -1)
         proj_key = x.view(m_batchsize, C, -1).permute(0, 2, 1)
-        energy = torch.bmm(proj_query, proj_key)
+        scale = (height * width) ** -0.5
+        energy = torch.bmm(proj_query * scale, proj_key)
         energy_new = torch.max(energy, -1, keepdim=True)[0].expand_as(energy)-energy
         attention = self.softmax(energy_new)
         proj_value = x.view(m_batchsize, C, -1)

@@ -136,6 +136,37 @@ def train_model(config, aug_config, args):
                     loss_cls, loss_box, loss_dfl = criterion(outs, targets)
                     loss = loss_cls + loss_box + loss_dfl
                     loss = loss / acc_grad  # Gradient accumulation
+                """
+                Detects non-finite loss (Inf/NaN) from AMP/fp16 overflow and skips the micro-batch's backward collectively across all DDP ranks (if continue block is used).
+                
+                Why collective: DDP's gradient all-reduce requires all ranks to call `backward()` together. 
+                If one rank skips while others don't → deadlock. We all-reduce a non-finite flag (`MAX`) so all ranks skip together.
+                
+                Why no grad zero: Only the bad micro-batch is dropped; gradients from valid micro-batches in the accumulation window are preserved.
+                
+                Note: The `continue`-based skip is untested for deadlock safety and remains commented out. Use it for your own risk.
+                """
+                local_nonfinite = (~torch.isfinite(loss)).float()
+                if args.distributed:
+                    flag = local_nonfinite.detach().clone()
+                    torch.distributed.all_reduce(flag, op=torch.distributed.ReduceOp.MAX)
+                    skip = flag.item() > 0
+                else:
+                    skip = local_nonfinite.item() > 0
+                if skip:
+                    if args.local_rank == 0:
+                        # Which component blew up → narrows data vs fp16
+                        print(f"\n[nan] e{epoch} it{it} | cls={loss_cls.item()} box={loss_box.item()} dfl={loss_dfl.item()}")
+                        # Inputs finite? (data path)
+                        print(f"[nan] clips_finite={torch.isfinite(clips).all().item()} "
+                            f"targets_finite={torch.isfinite(targets).all().item()} "
+                            f"n_targets={targets.shape[0]} labels={targets[:,5:].sum().item()}")
+                        # Model outputs finite? (fp16/activation path)
+                        if isinstance(outs, (list, tuple)):
+                            print(f"[nan] outs_finite={[torch.isfinite(o).all().item() for o in outs]}")
+                        else:
+                            print(f"[nan] outs_finite={torch.isfinite(outs).all().item()}")
+                    # continue  # all ranks skip this micro-batch together (safety net)
 
                 # Backward pass
                 scaler.scale(loss).backward()
